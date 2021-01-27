@@ -15,7 +15,7 @@ node('master') {
     }
     stage('Build') {
         echo "3.Build Docker Image Stage"
-        sh "docker build -t gwg456/jenkins-demo:${build_tag} ."
+        sh "sudo docker build -t gwg456/jenkins-demo:${build_tag} ."
     }
     stage('Push') {
         echo "4.Push Docker Image Stage"
