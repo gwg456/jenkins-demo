@@ -19,10 +19,10 @@ node('master') {
     }
     stage('Push') {
         echo "4.Push Docker Image Stage"
-        withCredentials([usernamePassword(credentialsId: 'dockerse', passwordVariable: 'samples28', usernameVariable: 'samples28')]) {
-            sh "docker login -u ${dockerHubUser} -p ${dockerHubPassword}"
+        LTAI4FkmfMzfrZ4izSSwZf4n
+            sh "docker login -u samples28 -p LTAI4FkmfMzfrZ4izSSwZf4n"
             sh "docker push samples28/jenkins-demo:${build_tag}"
-        }
+       
     }
     stage('Deploy') {
         echo "5. Deploy Stage"
