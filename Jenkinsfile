@@ -2,6 +2,7 @@ node('haimaxy-jnlp') {
     stage('Prepare') {
         echo "1.Prepare Stage"
         checkout scm
+        git url: 'https://github.com/gwg456/jenkins-demo.git'
         script {
             build_tag = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
             if (env.BRANCH_NAME != 'master') {
@@ -14,7 +15,7 @@ node('haimaxy-jnlp') {
     }
     stage('Build') {
         echo "3.Build Docker Image Stage"
-        sh "docker build -t cnych/jenkins-demo:${build_tag} ."
+        sh "docker build -t gwg456/jenkins-demo:${build_tag} ."
     }
     stage('Push') {
         echo "4.Push Docker Image Stage"
