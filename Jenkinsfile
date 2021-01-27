@@ -20,8 +20,8 @@ node('master') {
     stage('Push') {
         echo "4.Push Docker Image Stage"
         
-            sh "docker login -u samples28 -p 055af8e8-d98f-4928-a724-a3b07b1fc3e0"
-            sh "docker push cnych/jenkins-demo:${build_tag}"
+            sh "sudo docker login -u samples28 -p 055af8e8-d98f-4928-a724-a3b07b1fc3e0"
+            sh "sudo docker push samples28/jenkins-demo:${build_tag}"
        
        
     }
@@ -32,6 +32,6 @@ node('master') {
         }
         sh "sed -i 's/<BUILD_TAG>/${build_tag}/' k8s.yaml"
         sh "sed -i 's/<BRANCH_NAME>/${env.BRANCH_NAME}/' k8s.yaml"
-        sh "kubectl apply -f k8s.yaml --record"
+        sh "sudo kubectl apply -f k8s.yaml --record"
     }
 }
