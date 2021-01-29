@@ -1,4 +1,4 @@
-FROM golang:1.8.0-alpine
+FROM registry-vpc.cn-beijing.aliyuncs.com/moseeker/golang:1.8.0-alpine
 
 ADD . /go/src/app
 
