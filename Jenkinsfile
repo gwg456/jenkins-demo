@@ -22,7 +22,7 @@ node('master') {
         echo "4.Push Docker Image Stage"
         
            // sh "sudo docker login -u samples28 -p 055af8e8-d98f-4928-a724-a3b07b1fc3e0"
-            sh  "docker login --username=webmaster@moseeker.com registry-vpc.cn-beijing.aliyuncs.com -p 01DMGCYY66NW0CVQET1F
+            sh  "docker login --username=webmaster@moseeker.com registry-vpc.cn-beijing.aliyuncs.com -p 01DMGCYY66NW0CVQET1F"
             sh "sudo docker push registry-vpc.cn-beijing.aliyuncs.com/moseeker/jenkins-demo:${build_tag}"
        
        
