@@ -16,13 +16,13 @@ node('master') {
     stage('Build') {
         echo "3.Build Docker Image Stage"
         sh "echo ${build_tag}"
-        sh "sudo docker build -t samples28/jenkins-demo:${build_tag} ."
+        sh "sudo docker build -t registry-vpc.cn-beijing.aliyuncs.com/moseeker/jenkins-demo:${build_tag} ."
     }
     stage('Push') {
         echo "4.Push Docker Image Stage"
         
-            sh "sudo docker login -u samples28 -p 055af8e8-d98f-4928-a724-a3b07b1fc3e0"
-            sh "sudo docker push samples28/jenkins-demo:${build_tag}"
+           // sh "sudo docker login -u samples28 -p 055af8e8-d98f-4928-a724-a3b07b1fc3e0"
+            sh "sudo docker push registry-vpc.cn-beijing.aliyuncs.com/moseeker/jenkins-demo:${build_tag}"
        
        
     }
