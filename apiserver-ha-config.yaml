@@ -1,0 +1,251 @@
+# API Server 高可用配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kube-apiserver-config
+  namespace: kube-system
+data:
+  # API Server 配置
+  kube-apiserver.yaml: |
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: kube-apiserver
+      namespace: kube-system
+    spec:
+      containers:
+      - name: kube-apiserver
+        image: k8s.gcr.io/kube-apiserver:v1.28.0
+        command:
+        - kube-apiserver
+        # 基本配置
+        - --advertise-address=10.0.1.10
+        - --bind-address=0.0.0.0
+        - --secure-port=6443
+        - --insecure-port=0
+        
+        # etcd 配置
+        - --etcd-servers=https://10.0.1.10:2379,https://10.0.1.11:2379,https://10.0.1.12:2379
+        - --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt
+        - --etcd-certfile=/etc/kubernetes/pki/etcd/apiserver-etcd-client.crt
+        - --etcd-keyfile=/etc/kubernetes/pki/etcd/apiserver-etcd-client.key
+        
+        # TLS 配置
+        - --tls-cert-file=/etc/kubernetes/pki/apiserver.crt
+        - --tls-private-key-file=/etc/kubernetes/pki/apiserver.key
+        - --client-ca-file=/etc/kubernetes/pki/ca.crt
+        
+        # 服务账户配置
+        - --service-account-key-file=/etc/kubernetes/pki/sa.pub
+        - --service-account-signing-key-file=/etc/kubernetes/pki/sa.key
+        - --service-account-issuer=https://kubernetes.default.svc.cluster.local
+        
+        # 集群配置
+        - --service-cluster-ip-range=10.96.0.0/12
+        - --authorization-mode=Node,RBAC
+        - --enable-admission-plugins=NodeRestriction,ResourceQuota,LimitRanger
+        
+        # 高可用配置
+        - --apiserver-count=3
+        - --endpoint-reconciler-type=lease
+        - --enable-aggregator-routing=true
+        
+        # 审计配置
+        - --audit-log-path=/var/log/audit.log
+        - --audit-log-maxage=30
+        - --audit-log-maxbackup=3
+        - --audit-log-maxsize=100
+        - --audit-policy-file=/etc/kubernetes/audit-policy.yaml
+        
+        # 性能优化
+        - --max-requests-inflight=400
+        - --max-mutating-requests-inflight=200
+        - --request-timeout=60s
+        - --min-request-timeout=1800
+        
+        volumeMounts:
+        - name: k8s-certs
+          mountPath: /etc/kubernetes/pki
+          readOnly: true
+        - name: audit-logs
+          mountPath: /var/log
+        - name: audit-policy
+          mountPath: /etc/kubernetes/audit-policy.yaml
+          readOnly: true
+        
+        livenessProbe:
+          httpGet:
+            path: /livez
+            port: 6443
+            scheme: HTTPS
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 15
+          failureThreshold: 8
+        
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 6443
+            scheme: HTTPS
+          initialDelaySeconds: 0
+          periodSeconds: 1
+          timeoutSeconds: 15
+          failureThreshold: 3
+      
+      volumes:
+      - name: k8s-certs
+        hostPath:
+          path: /etc/kubernetes/pki
+          type: DirectoryOrCreate
+      - name: audit-logs
+        hostPath:
+          path: /var/log/kubernetes
+          type: DirectoryOrCreate
+      - name: audit-policy
+        hostPath:
+          path: /etc/kubernetes/audit-policy.yaml
+          type: File
+
+---
+# HAProxy 负载均衡配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haproxy-config
+  namespace: kube-system
+data:
+  haproxy.cfg: |
+    global
+        daemon
+        log stdout local0
+        chroot /var/lib/haproxy
+        stats socket /run/haproxy/admin.sock mode 660 level admin
+        stats timeout 30s
+        user haproxy
+        group haproxy
+        
+        # SSL 配置
+        ssl-default-bind-options no-sslv3 no-tls-tickets
+        ssl-default-bind-ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384
+        ssl-default-server-options no-sslv3 no-tls-tickets
+        ssl-default-server-ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384
+    
+    defaults
+        mode http
+        log global
+        option httplog
+        option dontlognull
+        option log-health-checks
+        option forwardfor
+        option http-server-close
+        timeout connect 10s
+        timeout client 1m
+        timeout server 1m
+        timeout http-request 10s
+        timeout http-keep-alive 2s
+        timeout check 10s
+        retries 3
+    
+    # 统计页面
+    listen stats
+        bind *:8404
+        stats enable
+        stats uri /stats
+        stats refresh 30s
+        stats admin if TRUE
+    
+    # Kubernetes API Server 后端
+    frontend k8s-api-frontend
+        bind *:6443
+        mode tcp
+        option tcplog
+        default_backend k8s-api-backend
+    
+    backend k8s-api-backend
+        mode tcp
+        option tcp-check
+        balance roundrobin
+        
+        # API Server 健康检查
+        tcp-check connect
+        tcp-check send-binary 474554202f76657273696f6e200d0a0d0a
+        tcp-check expect string HTTP/1.
+        
+        # API Server 节点
+        server master1 10.0.1.10:6443 check inter 2000 rise 2 fall 5
+        server master2 10.0.1.11:6443 check inter 2000 rise 2 fall 5
+        server master3 10.0.1.12:6443 check inter 2000 rise 2 fall 5
+
+---
+# HAProxy Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haproxy-lb
+  namespace: kube-system
+  labels:
+    app: haproxy-lb
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: haproxy-lb
+  template:
+    metadata:
+      labels:
+        app: haproxy-lb
+    spec:
+      containers:
+      - name: haproxy
+        image: haproxy:2.8-alpine
+        ports:
+        - containerPort: 6443
+          name: k8s-api
+        - containerPort: 8404
+          name: stats
+        volumeMounts:
+        - name: haproxy-config
+          mountPath: /usr/local/etc/haproxy/haproxy.cfg
+          subPath: haproxy.cfg
+        livenessProbe:
+          httpGet:
+            path: /stats
+            port: 8404
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /stats
+            port: 8404
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: haproxy-config
+        configMap:
+          name: haproxy-config
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+
+---
+# HAProxy Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: haproxy-lb-service
+  namespace: kube-system
+spec:
+  selector:
+    app: haproxy-lb
+  ports:
+  - name: k8s-api
+    port: 6443
+    targetPort: 6443
+  - name: stats
+    port: 8404
+    targetPort: 8404
+  type: LoadBalancer
