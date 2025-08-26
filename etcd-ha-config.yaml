@@ -1,0 +1,132 @@
+# etcd 高可用集群配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: etcd-cluster-config
+  namespace: kube-system
+data:
+  # etcd 节点1配置
+  etcd-node1.yaml: |
+    name: etcd-node1
+    data-dir: /var/lib/etcd
+    listen-client-urls: https://10.0.1.10:2379,https://127.0.0.1:2379
+    advertise-client-urls: https://10.0.1.10:2379
+    listen-peer-urls: https://10.0.1.10:2380
+    initial-advertise-peer-urls: https://10.0.1.10:2380
+    initial-cluster: etcd-node1=https://10.0.1.10:2380,etcd-node2=https://10.0.1.11:2380,etcd-node3=https://10.0.1.12:2380
+    initial-cluster-token: etcd-cluster-ha
+    initial-cluster-state: new
+    
+    # TLS 配置
+    client-transport-security:
+      cert-file: /etc/kubernetes/pki/etcd/server.crt
+      key-file: /etc/kubernetes/pki/etcd/server.key
+      client-cert-auth: true
+      trusted-ca-file: /etc/kubernetes/pki/etcd/ca.crt
+    
+    peer-transport-security:
+      cert-file: /etc/kubernetes/pki/etcd/peer.crt
+      key-file: /etc/kubernetes/pki/etcd/peer.key
+      peer-client-cert-auth: true
+      trusted-ca-file: /etc/kubernetes/pki/etcd/ca.crt
+    
+    # 性能优化
+    max-snapshots: 5
+    max-wals: 5
+    snapshot-count: 100000
+    heartbeat-interval: 100
+    election-timeout: 1000
+
+  # etcd 节点2配置
+  etcd-node2.yaml: |
+    name: etcd-node2
+    data-dir: /var/lib/etcd
+    listen-client-urls: https://10.0.1.11:2379,https://127.0.0.1:2379
+    advertise-client-urls: https://10.0.1.11:2379
+    listen-peer-urls: https://10.0.1.11:2380
+    initial-advertise-peer-urls: https://10.0.1.11:2380
+    initial-cluster: etcd-node1=https://10.0.1.10:2380,etcd-node2=https://10.0.1.11:2380,etcd-node3=https://10.0.1.12:2380
+    initial-cluster-token: etcd-cluster-ha
+    initial-cluster-state: new
+    
+    # TLS 配置 (同节点1)
+    client-transport-security:
+      cert-file: /etc/kubernetes/pki/etcd/server.crt
+      key-file: /etc/kubernetes/pki/etcd/server.key
+      client-cert-auth: true
+      trusted-ca-file: /etc/kubernetes/pki/etcd/ca.crt
+    
+    peer-transport-security:
+      cert-file: /etc/kubernetes/pki/etcd/peer.crt
+      key-file: /etc/kubernetes/pki/etcd/peer.key
+      peer-client-cert-auth: true
+      trusted-ca-file: /etc/kubernetes/pki/etcd/ca.crt
+
+  # etcd 节点3配置
+  etcd-node3.yaml: |
+    name: etcd-node3
+    data-dir: /var/lib/etcd
+    listen-client-urls: https://10.0.1.12:2379,https://127.0.0.1:2379
+    advertise-client-urls: https://10.0.1.12:2379
+    listen-peer-urls: https://10.0.1.12:2380
+    initial-advertise-peer-urls: https://10.0.1.12:2380
+    initial-cluster: etcd-node1=https://10.0.1.10:2380,etcd-node2=https://10.0.1.11:2380,etcd-node3=https://10.0.1.12:2380
+    initial-cluster-token: etcd-cluster-ha
+    initial-cluster-state: new
+    
+    # TLS 配置 (同节点1)
+    client-transport-security:
+      cert-file: /etc/kubernetes/pki/etcd/server.crt
+      key-file: /etc/kubernetes/pki/etcd/server.key
+      client-cert-auth: true
+      trusted-ca-file: /etc/kubernetes/pki/etcd/ca.crt
+    
+    peer-transport-security:
+      cert-file: /etc/kubernetes/pki/etcd/peer.crt
+      key-file: /etc/kubernetes/pki/etcd/peer.key
+      peer-client-cert-auth: true
+      trusted-ca-file: /etc/kubernetes/pki/etcd/ca.crt
+
+---
+# etcd 备份策略
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: etcd-backup
+  namespace: kube-system
+spec:
+  schedule: "0 2 * * *"  # 每天凌晨2点备份
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: etcd-backup
+            image: quay.io/coreos/etcd:v3.5.9
+            command:
+            - /bin/sh
+            - -c
+            - |
+              ETCDCTL_API=3 etcdctl \
+                --endpoints=https://10.0.1.10:2379,https://10.0.1.11:2379,https://10.0.1.12:2379 \
+                --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+                --cert=/etc/kubernetes/pki/etcd/server.crt \
+                --key=/etc/kubernetes/pki/etcd/server.key \
+                snapshot save /backup/etcd-snapshot-$(date +%Y%m%d-%H%M%S).db
+              
+              # 保留最近7天的备份
+              find /backup -name "etcd-snapshot-*.db" -mtime +7 -delete
+            volumeMounts:
+            - name: etcd-certs
+              mountPath: /etc/kubernetes/pki/etcd
+              readOnly: true
+            - name: backup-storage
+              mountPath: /backup
+          volumes:
+          - name: etcd-certs
+            secret:
+              secretName: etcd-certs
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: etcd-backup-pvc
+          restartPolicy: OnFailure
