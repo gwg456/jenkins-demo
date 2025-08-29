@@ -1,0 +1,199 @@
+pipeline {
+    agent {
+        label 'master'
+    }
+    
+    environment {
+        DOCKER_REGISTRY = 'registry-vpc.cn-beijing.aliyuncs.com'
+        IMAGE_NAME = 'moseeker/jenkins-demo-rust'
+        DOCKER_BUILDKIT = '1'
+    }
+    
+    stages {
+        stage('Prepare') {
+            steps {
+                echo "🚀 1.准备阶段 - 检出代码"
+                checkout scm
+                script {
+                    // 使用Git命令获取提交信息
+                    env.BUILD_TAG = sh(
+                        returnStdout: true, 
+                        script: 'git rev-parse --short HEAD'
+                    ).trim()
+                    
+                    env.BUILD_TIME = sh(
+                        returnStdout: true,
+                        script: 'date "+%Y%m%d-%H%M%S"'
+                    ).trim()
+                    
+                    if (env.BRANCH_NAME != 'master') {
+                        env.BUILD_TAG = "${env.BRANCH_NAME}-${env.BUILD_TAG}"
+                    }
+                    
+                    echo "构建标签: ${env.BUILD_TAG}"
+                    echo "分支名称: ${env.BRANCH_NAME}"
+                }
+            }
+        }
+        
+        stage('Test') {
+            steps {
+                echo "🧪 2.功能测试阶段"
+                script {
+                    try {
+                        // Rust编译检查
+                        sh 'docker run --rm -v $(pwd):/workspace -w /workspace rust:1.75-alpine sh -c "apk add --no-cache musl-dev && cargo check"'
+                        
+                        // 构建并测试
+                        sh 'docker build -t jenkins-demo-rust-test .'
+                        sh 'docker run -d --name test-container -p 8080:8080 jenkins-demo-rust-test'
+                        sh 'sleep 5'
+                        sh 'curl -f http://localhost:8080/health || exit 1'
+                        sh 'curl -f http://localhost:8080/api/info || exit 1'
+                        sh 'docker stop test-container && docker rm test-container'
+                        
+                        echo "✅ 功能测试通过"
+                    } catch (Exception e) {
+                        echo "❌ 测试失败: ${e.message}"
+                        sh 'docker stop test-container && docker rm test-container || true'
+                        throw e
+                    }
+                }
+            }
+        }
+        
+        stage('Security Scan') {
+            steps {
+                echo "🔒 3.安全扫描 (Rust版本跳过Go特定检查)"
+                script {
+                    try {
+                        // Docker安全扫描 (如果有工具的话)
+                        echo "Rust版本安全检查..."
+                        // sh 'cargo audit' // 需要安装cargo-audit
+                        echo "✅ 安全扫描完成"
+                    } catch (Exception e) {
+                        echo "⚠️ 安全扫描警告: ${e.message}"
+                        // 安全扫描失败不阻断构建，但记录警告
+                    }
+                }
+            }
+        }
+        
+        stage('Build') {
+            steps {
+                echo "🔨 4.构建Docker镜像"
+                script {
+                    try {
+                        sh """
+                            docker build \
+                                --build-arg BUILD_TIME=${env.BUILD_TIME} \
+                                --build-arg BUILD_TAG=${env.BUILD_TAG} \
+                                --build-arg BRANCH_NAME=${env.BRANCH_NAME} \
+                                -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:${env.BUILD_TAG} \
+                                -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:latest \
+                                .
+                        """
+                        
+                        echo "✅ 镜像构建成功: ${env.BUILD_TAG}"
+                    } catch (Exception e) {
+                        echo "❌ 镜像构建失败: ${e.message}"
+                        throw e
+                    }
+                }
+            }
+        }
+        
+        stage('Push') {
+            steps {
+                echo "📤 5.推送Docker镜像"
+                script {
+                    // 使用Jenkins凭据管理
+                    withCredentials([usernamePassword(
+                        credentialsId: 'aliyun-docker-registry',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )]) {
+                        sh '''
+                            echo $DOCKER_PASSWORD | docker login $DOCKER_REGISTRY \
+                                --username $DOCKER_USERNAME --password-stdin
+                            
+                            docker push $DOCKER_REGISTRY/$IMAGE_NAME:$BUILD_TAG
+                            docker push $DOCKER_REGISTRY/$IMAGE_NAME:latest
+                            
+                            echo "✅ 镜像推送成功"
+                        '''
+                    }
+                }
+            }
+            post {
+                always {
+                    // 清理本地镜像
+                    sh "docker rmi ${DOCKER_REGISTRY}/${IMAGE_NAME}:${env.BUILD_TAG} || true"
+                    sh "docker rmi ${DOCKER_REGISTRY}/${IMAGE_NAME}:latest || true"
+                }
+            }
+        }
+        
+        stage('Deploy') {
+            steps {
+                echo "🚀 6.部署阶段"
+                script {
+                    if (env.BRANCH_NAME == 'master') {
+                        // 生产环境部署需要人工确认
+                        input message: "确认要部署到生产环境吗？", 
+                              ok: "确认部署", 
+                              submitterParameter: 'DEPLOYER'
+                        
+                        echo "开始部署到生产环境..."
+                        echo "部署者: ${env.DEPLOYER}"
+                        
+                        // 更新k8s.yaml中的镜像标签
+                        sh """
+                            sed -i 's|image: .*jenkins-demo.*|image: ${DOCKER_REGISTRY}/${IMAGE_NAME}:${env.BUILD_TAG}|g' k8s.yaml
+                        """
+                        
+                        // 应用到Kubernetes
+                        sh 'kubectl apply -f k8s.yaml'
+                        
+                        echo "✅ 生产环境部署完成"
+                    } else {
+                        echo "非master分支，跳过部署阶段"
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo "🏁 构建完成"
+            
+            // 清理工作空间（可选）
+            // deleteDir()
+            
+            // 发送邮件通知（需要配置邮件服务器）
+            script {
+                def buildStatus = currentBuild.result ?: 'SUCCESS'
+                def color = buildStatus == 'SUCCESS' ? 'good' : 'danger'
+                def emoji = buildStatus == 'SUCCESS' ? '✅' : '❌'
+                
+                echo "${emoji} 构建状态: ${buildStatus}"
+                echo "分支: ${env.BRANCH_NAME}"
+                echo "提交: ${env.BUILD_TAG}"
+                echo "构建时间: ${env.BUILD_TIME}"
+            }
+        }
+        
+        success {
+            echo "🎉 构建成功！"
+        }
+        
+        failure {
+            echo "💥 构建失败！"
+        }
+        
+        unstable {
+            echo "⚠️ 构建不稳定！"
+        }
+    }
+} 

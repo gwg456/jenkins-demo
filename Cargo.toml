@@ -1,0 +1,33 @@
+[package]
+name = "jenkins-demo"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "jenkins_demo"
+path = "src/lib.rs"
+
+[[bin]]
+name = "jenkins-demo"
+path = "src/main.rs"
+
+[[bin]]
+name = "jenkins-cli"
+path = "src/jenkins_cli.rs"
+
+[dependencies]
+actix-web = "4.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1.0", features = ["full"] }
+env_logger = "0.10"
+log = "0.4"
+# Jenkins CLI dependencies
+reqwest = { version = "0.11", features = ["json", "blocking"] }
+clap = { version = "4.0", features = ["derive"] }
+anyhow = "1.0"
+base64 = "0.21"
+
+[dev-dependencies]
+actix-web = { version = "4.4" } 
